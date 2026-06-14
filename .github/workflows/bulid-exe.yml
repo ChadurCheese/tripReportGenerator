@@ -28,6 +28,10 @@ jobs:
       - name: Build with Maven
         run: mvn clean package
 
+      - name: Verify JAR exists
+        run: |
+          dir target
+
       - name: Run jpackage
         shell: pwsh
         run: |
@@ -35,7 +39,7 @@ jobs:
             --type exe `
             --name TripReportGenerator `
             --input target `
-            --main-jar trip-report-generator-1.0.0-shaded.jar `
+            --main-jar *.jar `
             --main-class com.tripreport.app.Main `
             --win-shortcut `
             --win-menu `
