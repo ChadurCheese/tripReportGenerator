@@ -80,6 +80,13 @@ public class PdfGenerator {
     private static final float ROW_TRAILER_X = 475;
     private static final float ROW_DUTY_CODE_X = 550;
 
+    // Coordinates for detail rows (H/J duty codes) - merged shipper/consignee field
+    private static final float DETAIL_ROW_X = 185;
+    private static final float DETAIL_ROW_WIDTH = 220;
+    private static final float DETAIL_ROW_MAX_FONT = 9;
+    private static final float DETAIL_ROW_MIN_FONT = 5;
+    
+
     private static final float FONT_SIZE = 9;
     private static final String TEMPLATE_RESOURCE_PATH = "templates/Trip Report Form 2026.pdf";
 
@@ -212,6 +219,11 @@ public class PdfGenerator {
 
             float yPosition = ROW_START_Y - (i * ROW_HEIGHT);
 
+            if (entry.isDetailRow()) {
+                drawDetailRow(document, page, entry, yPosition);
+                continue;
+            }
+
             // Mileage
             if (entry.getMileage() != null && !entry.getMileage().isEmpty()) {
                 addTextToPage(document, page, entry.getMileage(), ROW_MILEAGE_X, yPosition);
@@ -277,6 +289,89 @@ public class PdfGenerator {
                         logger.warn("Unknown freight type: {}", type);
                 }
             }
+        }
+    }
+
+    /* Draw detail rows for H/J duty codes, which use a merged shipper/consignee field for explanations.
+     * These rows can have variable length text, so we need to fit it within a defined area.
+     */
+    private void drawDetailRow(
+        PDDocument document,
+        PDPage page,
+        TripEntry entry,
+        float yPosition) throws IOException {
+
+        String text = entry.getDetailText();
+
+        if (text == null || text.trim().isEmpty()) {
+            String shipper = entry.getShipper() == null ? "" : entry.getShipper();
+            String consignee = entry.getConsignee() == null ? "" : entry.getConsignee();
+            text = shipper + "    " + consignee;
+        }
+
+        if (text.trim().isEmpty()) {
+            return;
+        }
+
+        addFittedTextToPage(
+                document,
+                page,
+                text,
+                DETAIL_ROW_X,
+                yPosition,
+                DETAIL_ROW_WIDTH);
+    }
+
+    
+    // This method attempts to fit the provided text within the specified width by adjusting the font size.
+    private void addFittedTextToPage(
+        PDDocument document,
+        PDPage page,
+        String text,
+        float x,
+        float y,
+        float maxWidth) throws IOException {
+
+        if (text == null || text.trim().isEmpty()) {
+            return;
+        }
+
+        float fontSize = FONT_SIZE;
+
+        while (fontSize > DETAIL_ROW_MIN_FONT) {
+
+            float width =
+                    PDType1Font.HELVETICA.getStringWidth(text)
+                    / 1000f
+                    * fontSize;
+
+            if (width <= maxWidth) {
+                break;
+            }
+
+            fontSize -= 0.5f;
+        }
+
+        PDPageContentStream contentStream =
+                new PDPageContentStream(
+                        document,
+                        page,
+                        PDPageContentStream.AppendMode.APPEND,
+                        true,
+                        true);
+
+        try {
+            contentStream.beginText();
+            contentStream.setFont(
+                    PDType1Font.HELVETICA,
+                    fontSize);
+
+            contentStream.newLineAtOffset(x, y);
+            contentStream.showText(text);
+            contentStream.endText();
+
+        } finally {
+            contentStream.close();
         }
     }
 

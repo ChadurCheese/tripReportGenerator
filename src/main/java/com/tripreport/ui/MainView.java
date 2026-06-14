@@ -360,28 +360,26 @@ public class MainView extends Application {
      * Detail rows have merged shipper/consignee cells and are used for extra explanation.
      */
     private void handleHJDutyCode(int rowIndex, TripEntry parentEntry) {
-        // Check if the next row already exists and is a detail row
+
         if (rowIndex + 1 < tripEntries.size()) {
             TripEntry nextRow = tripEntries.get(rowIndex + 1);
+
             if (nextRow.isDetailRow()) {
-                // Update existing detail row with parent's shipper/consignee
-                nextRow.setShipper(parentEntry.getShipper());
-                nextRow.setConsignee(parentEntry.getConsignee());
                 tripTable.refresh();
                 return;
             }
         }
 
-        // Create a new detail row if we have room
         if (tripEntries.size() < pdfGenerator.getMaxRows()) {
             TripEntry detailRow = new TripEntry();
             detailRow.setDetailRow(true);
-            detailRow.setShipper(parentEntry.getShipper());
-            detailRow.setConsignee(parentEntry.getConsignee());
-            // Other fields remain empty for detail row
+
+            // Leave fields empty for user input
+
             tripEntries.add(rowIndex + 1, detailRow);
             updateAddRowButtonState();
         }
+
         tripTable.refresh();
     }
 

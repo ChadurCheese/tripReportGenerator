@@ -114,6 +114,12 @@ public class TripEntry {
      * Used to determine if the row should be written to the PDF.
      */
     public boolean isPopulated() {
+        if (detailRow) {
+            return (shipper != null && !shipper.trim().isEmpty())
+                || (consignee != null && !consignee.trim().isEmpty())
+                || (detailText != null && !detailText.trim().isEmpty());
+        }
+        
         return mileage != null && !mileage.trim().isEmpty() ||
                cityZipCode != null && !cityZipCode.trim().isEmpty() ||
                shipper != null && !shipper.trim().isEmpty() ||
