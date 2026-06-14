@@ -39,6 +39,7 @@ jobs:
         shell: pwsh
         run: |
           jpackage `
+            
             --type exe `
             --name TripReportGenerator `
             --input target `
