@@ -2,8 +2,8 @@ name: Build Windows App EXE
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 jobs:
   build-windows:
@@ -32,6 +32,9 @@ jobs:
         run: |
           dir target
 
+      - name: Show target folder
+        run: dir target
+
       - name: Run jpackage
         shell: pwsh
         run: |
@@ -39,7 +42,7 @@ jobs:
             --type exe `
             --name TripReportGenerator `
             --input target `
-            --main-jar *.jar `
+            --main-jar trip-report-generator.jar `
             --main-class com.tripreport.app.Main `
             --win-shortcut `
             --win-menu `
