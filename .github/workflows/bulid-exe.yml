@@ -39,12 +39,14 @@ jobs:
           jpackage `
             --type exe `
             --name TripReportGenerator `
+            --app-version "1.0.${{ github.run_number }}" `
             --input target `
             --main-jar trip-report-generator.jar `
             --main-class com.tripreport.app.Main `
             --win-shortcut `
             --win-menu `
-            --win-dir-chooser
+            --win-dir-chooser `
+            --win-upgrade-uuid 8f5b6c1a-2e3d-4a7f-9c8b-1d6e0f4a2b3c
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
