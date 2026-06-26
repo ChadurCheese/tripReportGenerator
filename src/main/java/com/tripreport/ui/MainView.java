@@ -57,6 +57,7 @@ public class MainView extends Application {
     private Button removeRowButton;
     private Button previewButton;
     private Button generateButton;
+    private CheckBox debugModeCheckBox;
 
     @Override
     public void start(Stage primaryStage) {
@@ -68,12 +69,20 @@ public class MainView extends Application {
             // Create main layout
             BorderPane root = createMainLayout();
 
+            // Size the window to fit the available screen (e.g. small laptop displays),
+            // capped at a comfortable default so it doesn't grow unnecessarily on large monitors.
+            javafx.geometry.Rectangle2D screenBounds = javafx.stage.Screen.getPrimary().getVisualBounds();
+            double width = Math.min(1200, screenBounds.getWidth() * 0.9);
+            double height = Math.min(800, screenBounds.getHeight() * 0.9);
+
             // Create scene
-            Scene scene = new Scene(root, 1200, 800);
+            Scene scene = new Scene(root, width, height);
 
             // Set up stage
             primaryStage.setTitle(APP_TITLE);
             primaryStage.setScene(scene);
+            primaryStage.setOnCloseRequest(e -> javafx.application.Platform.exit());
+            primaryStage.centerOnScreen();
             primaryStage.show();
 
             logger.info("Application started successfully");
@@ -100,7 +109,13 @@ public class MainView extends Application {
         mainContent.getChildren().addAll(headerSection, tableSection, buttonSection);
         VBox.setVgrow(tableSection, Priority.ALWAYS);
 
-        root.setCenter(mainContent);
+        // Wrap in a ScrollPane so that on small screens the header stays reachable
+        // by scrolling, instead of being clipped off the bottom of the window.
+        ScrollPane scrollPane = new ScrollPane(mainContent);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
+
+        root.setCenter(scrollPane);
         return root;
     }
 
@@ -168,10 +183,10 @@ public class MainView extends Application {
         // Debug checkbox row
         HBox debugBox = new HBox(20);
         debugBox.setAlignment(Pos.CENTER_LEFT);
-        CheckBox debugCheckBox = new CheckBox("Debug Mode (shows coordinates on PDF)");
-        debugCheckBox.setStyle("-fx-font-size: 11;");
-        debugCheckBox.setOnAction(e -> pdfGenerator.setDebugMode(debugCheckBox.isSelected()));
-        debugBox.getChildren().add(debugCheckBox);
+        debugModeCheckBox = new CheckBox("Debug Mode (shows coordinates on PDF)");
+        debugModeCheckBox.setStyle("-fx-font-size: 11;");
+        debugModeCheckBox.setOnAction(e -> pdfGenerator.setDebugMode(debugModeCheckBox.isSelected()));
+        debugBox.getChildren().add(debugModeCheckBox);
 
         section.getChildren().addAll(sectionTitle, mileageBox, dateBox, debugBox);
         return section;
@@ -191,6 +206,24 @@ public class MainView extends Application {
         tripTable = new TableView<>();
         tripTable.setEditable(true);
 
+        // Row number column - shows the sequential row number for populated/detail rows only,
+        // so it's easy to see at a glance how many rows have actually been created.
+        TableColumn<TripEntry, Void> rowNumCol = new TableColumn<>("#");
+        rowNumCol.setPrefWidth(30);
+        rowNumCol.setEditable(false);
+        rowNumCol.setCellFactory(col -> new TableCell<TripEntry, Void>() {
+            @Override
+            protected void updateItem(Void item, boolean empty) {
+                super.updateItem(item, empty);
+                TripEntry entry = empty ? null : getTableRow().getItem();
+                if (entry != null && entry.isPopulated()) {
+                    setText(String.valueOf(getIndex() + 1));
+                } else {
+                    setText(null);
+                }
+            }
+        });
+
         // Mileage column
         TableColumn<TripEntry, String> mileageCol = createEditableColumn("Mileage", "mileage", 80);
 
@@ -208,9 +241,10 @@ public class MainView extends Application {
         typeCol.setPrefWidth(70);
         typeCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(cellData.getValue().getType()));
         typeCol.setCellFactory(col -> new ComboBoxTableCell<>(FXCollections.observableArrayList("EM", "TL", "LTL")));
-        typeCol.setOnEditCommit(event ->
-                event.getRowValue().setType(event.getNewValue() != null ? event.getNewValue() : "")
-        );
+        typeCol.setOnEditCommit(event -> {
+            event.getRowValue().setType(event.getNewValue() != null ? event.getNewValue() : "");
+            tripTable.refresh();
+        });
 
         // Trailer Number column
         TableColumn<TripEntry, String> trailerCol = createEditableColumn("Trailer Number", "trailerNumber", 100);
@@ -219,22 +253,37 @@ public class MainView extends Application {
         TableColumn<TripEntry, String> dutyCol = new TableColumn<>("Duty Code");
         dutyCol.setPrefWidth(80);
         dutyCol.setCellValueFactory(cellData -> new javafx.beans.property.SimpleStringProperty(cellData.getValue().getDutyCode()));
-        dutyCol.setCellFactory(col -> new ComboBoxTableCell<>(FXCollections.observableArrayList(
-                "A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "N", "S", "T"
-        )));
+        dutyCol.setCellFactory(col -> new DutyCodeTableCell<>());
         dutyCol.setOnEditCommit(event -> {
             int rowIndex = event.getTablePosition().getRow();
             TripEntry entry = event.getRowValue();
             String newDutyCode = event.getNewValue();
             entry.setDutyCode(newDutyCode != null ? newDutyCode : "");
-            
+
             // Handle H and J duty codes - they require a detail row below
-            if ("H".equals(newDutyCode) || "J".equals(newDutyCode)) {
+            if (entry.hasDutyCode("H") || entry.hasDutyCode("J")) {
                 handleHJDutyCode(rowIndex, entry);
             }
+            tripTable.refresh();
         });
 
-        tripTable.getColumns().addAll(mileageCol, cityCol, shipperCol, consigneeCol, typeCol, trailerCol, dutyCol);
+        tripTable.getColumns().addAll(rowNumCol, mileageCol, cityCol, shipperCol, consigneeCol, typeCol, trailerCol, dutyCol);
+
+        // Color rows by state: populated (white), empty/to-be-created (gray), detail row (yellow)
+        tripTable.setRowFactory(tv -> {
+            TableRow<TripEntry> row = new TableRow<>() {
+                @Override
+                protected void updateItem(TripEntry entry, boolean empty) {
+                    super.updateItem(entry, empty);
+                    applyRowStyle(this);
+                }
+            };
+            // Selection has its own highlight style; re-apply ours only once a row is deselected,
+            // otherwise our inline background wins over the selection highlight but leaves the
+            // selected (white) text color behind, making the text invisible.
+            row.selectedProperty().addListener((obs, wasSelected, isSelected) -> applyRowStyle(row));
+            return row;
+        });
 
         // Initialize table data
         tripEntries = FXCollections.observableArrayList();
@@ -247,6 +296,23 @@ public class MainView extends Application {
         VBox.setVgrow(tripTable, Priority.ALWAYS);
 
         return section;
+    }
+
+    /**
+     * Apply background coloring to a table row based on its state, unless the row is currently
+     * selected (selection highlighting takes priority so selected text remains legible).
+     */
+    private void applyRowStyle(TableRow<TripEntry> row) {
+        TripEntry entry = row.getItem();
+        if (row.isEmpty() || entry == null || row.isSelected()) {
+            row.setStyle("");
+        } else if (entry.isDetailRow()) {
+            row.setStyle("-fx-background-color: #fff8dc;");
+        } else if (!entry.isPopulated()) {
+            row.setStyle("-fx-background-color: #f0f0f0;");
+        } else {
+            row.setStyle("-fx-background-color: white;");
+        }
     }
 
     /**
@@ -308,6 +374,8 @@ public class MainView extends Application {
         loadSampleButton.setPrefWidth(140);
         loadSampleButton.setStyle("-fx-font-size: 10;");
         loadSampleButton.setOnAction(e -> loadSampleData());
+        loadSampleButton.visibleProperty().bind(debugModeCheckBox.selectedProperty());
+        loadSampleButton.managedProperty().bind(debugModeCheckBox.selectedProperty());
 
         Separator spacer = new Separator();
         HBox.setHgrow(spacer, Priority.ALWAYS);
@@ -431,22 +499,38 @@ public class MainView extends Application {
         tripStartDatePicker.setValue(java.time.LocalDate.of(2026, 6, 14));
         tripEndDatePicker.setValue(java.time.LocalDate.of(2026, 6, 15));
 
-        // Add sample trip entries
+        // Normal row, single duty code
         TripEntry entry1 = new TripEntry("12500", "Chicago, IL 60601", "ABC Shipping", "XYZ Receiver", "TL", "TR-001", "A");
         tripEntries.add(entry1);
 
-        TripEntry entry2 = new TripEntry("12575", "Indianapolis, IN 46202", "Quick Delivery", "Fast Logistics", "LTL", "TR-002", "B");
+        // Normal row, multi-select duty code - exercises the new "X/Y" combo
+        TripEntry entry2 = new TripEntry("12575", "Indianapolis, IN 46202", "Quick Delivery", "Fast Logistics", "LTL", "TR-002", "B/N");
         tripEntries.add(entry2);
 
-        TripEntry entry3 = new TripEntry("12650", "Cincinnati, OH 45202", "Premium Transport", "Standard Warehouse", "EM", "TR-003", "J");
+        // Duty code H - should auto-generate a detail row below with long text that
+        // needs to shrink and wrap onto a second line in the PDF
+        TripEntry entry3 = new TripEntry("12610", "Cincinnati, OH 45202", "Premium Transport", "Standard Warehouse", "EM", "TR-003", "H");
         tripEntries.add(entry3);
 
-        // Add detail row for H/J duty code
-        TripEntry detailRow = new TripEntry();
-        detailRow.setDetailRow(true);
-        detailRow.setShipper("Special handling for hazmat materials");
-        detailRow.setConsignee("See shipping documentation");
-        tripEntries.add(detailRow);
+        TripEntry detailRowH = new TripEntry();
+        detailRowH.setDetailRow(true);
+        detailRowH.setShipper("Hazardous materials handling delay due to mechanical inspection "
+                + "required at the Cincinnati weigh station before continuing");
+        tripEntries.add(detailRowH);
+
+        // Multi-select duty code that includes J - confirms H/J detection still works
+        // when the code is combined with another (e.g. "C/J", not just "J")
+        TripEntry entry4 = new TripEntry("12650", "Louisville, KY 40202", "Overnight Freight Co", "Riverbend Distribution", "TL", "TR-004", "C/J");
+        tripEntries.add(entry4);
+
+        TripEntry detailRowJ = new TripEntry();
+        detailRowJ.setDetailRow(true);
+        detailRowJ.setShipper("Extended layover for mandatory DOT rest period combined with "
+                + "customer dock scheduling conflict at the receiving facility");
+        tripEntries.add(detailRowJ);
+
+        // Trailing empty row left unfilled to show the gray "to be created" row coloring
+        tripEntries.add(new TripEntry());
 
         tripTable.refresh();
         updateTotalMileage();
@@ -489,7 +573,8 @@ public class MainView extends Application {
                 logger.info("Preview PDF opened: {}", tempPath);
                 
                 // Schedule deletion of preview file after a delay (gives time for viewer to open)
-                new java.util.Timer().schedule(new java.util.TimerTask() {
+                java.util.Timer timer = new java.util.Timer(true);  // daemon thread - won't block JVM exit
+                timer.schedule(new java.util.TimerTask() {
                     @Override
                     public void run() {
                         try {
@@ -497,6 +582,8 @@ public class MainView extends Application {
                             logger.info("Temporary preview file deleted: {}", tempPath);
                         } catch (Exception e) {
                             logger.warn("Could not delete temporary preview file: {}", tempPath);
+                        } finally {
+                            timer.cancel();
                         }
                     }
                 }, 5000);  // Delete after 5 seconds to allow viewer time to open
@@ -633,6 +720,14 @@ public class MainView extends Application {
                     commitEdit(textField.getText());
                 } else if (event.getCode() == javafx.scene.input.KeyCode.ESCAPE) {
                     cancelEdit();
+                } else if (event.getCode() == javafx.scene.input.KeyCode.TAB) {
+                    event.consume();
+                    int row = getIndex();
+                    TableColumn<TripEntry, String> column = getTableColumn();
+                    TableView<TripEntry> tableView = getTableView();
+                    boolean forward = !event.isShiftDown();
+                    commitEdit(textField.getText());
+                    TableNavigation.editAdjacentCell(tableView, row, column, forward);
                 }
             });
             textField.focusedProperty().addListener((obs, wasFocused, isNowFocused) -> {
@@ -694,6 +789,22 @@ public class MainView extends Application {
                 T selectedValue = comboBox.getValue();
                 if (selectedValue != null) {
                     commitEdit(selectedValue);
+                }
+            });
+            comboBox.setOnKeyPressed(event -> {
+                if (event.getCode() == javafx.scene.input.KeyCode.TAB) {
+                    event.consume();
+                    int row = getIndex();
+                    TableColumn<S, T> column = getTableColumn();
+                    TableView<S> tableView = getTableView();
+                    boolean forward = !event.isShiftDown();
+                    T selectedValue = comboBox.getValue();
+                    if (selectedValue != null) {
+                        commitEdit(selectedValue);
+                    } else {
+                        cancelEdit();
+                    }
+                    TableNavigation.editAdjacentCell(tableView, row, column, forward);
                 }
             });
         }

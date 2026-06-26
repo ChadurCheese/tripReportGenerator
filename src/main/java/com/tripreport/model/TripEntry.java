@@ -101,6 +101,13 @@ public class TripEntry {
         this.dutyCode = dutyCode;
     }
 
+    /**
+     * Check if the given single-letter code is one of the (up to 2) selected duty codes.
+     */
+    public boolean hasDutyCode(String code) {
+        return dutyCode != null && java.util.Arrays.asList(dutyCode.split("/")).contains(code);
+    }
+
     public boolean isDetailRow() {
         return detailRow;
     }

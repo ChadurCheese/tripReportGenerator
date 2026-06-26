@@ -17,6 +17,7 @@ import java.io.File;
 import java.io.IOException;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -81,11 +82,24 @@ public class PdfGenerator {
     private static final float ROW_DUTY_CODE_X = 550;
 
     // Coordinates for detail rows (H/J duty codes) - merged shipper/consignee field
-    private static final float DETAIL_ROW_X = 185;
+    private static final float DETAIL_ROW_X = 183;
     private static final float DETAIL_ROW_WIDTH = 220;
-    private static final float DETAIL_ROW_MAX_FONT = 9;
-    private static final float DETAIL_ROW_MIN_FONT = 5;
-    
+
+    // Shared min font floor for the shrink-then-wrap text fitting used across all row columns
+    private static final float MIN_FONT = 5;
+    private static final float COLUMN_PADDING = 10;
+    // When text wraps to a 2nd line, nudge the whole 2-line block up by this much so it doesn't
+    // dip into the row underneath. Single-line text is unaffected.
+    private static final float WRAP_Y_OFFSET = 6;
+
+    // Column width budgets, derived from the X-coordinate spacing between adjacent columns
+    private static final float MILEAGE_WIDTH = ROW_CITY_X - ROW_MILEAGE_X - COLUMN_PADDING;
+    private static final float CITY_WIDTH = ROW_SHIPPER_X - ROW_CITY_X - COLUMN_PADDING;
+    private static final float SHIPPER_WIDTH = ROW_CONSIGNEE_X - ROW_SHIPPER_X - COLUMN_PADDING;
+    private static final float CONSIGNEE_WIDTH = ROW_TYPE_X - ROW_CONSIGNEE_X - COLUMN_PADDING;
+    private static final float TRAILER_WIDTH = ROW_DUTY_CODE_X - ROW_TRAILER_X - COLUMN_PADDING;
+    private static final float DUTY_CODE_WIDTH = 40;
+
 
     private static final float FONT_SIZE = 9;
     private static final String TEMPLATE_RESOURCE_PATH = "templates/Trip Report Form 2026.pdf";
@@ -226,33 +240,33 @@ public class PdfGenerator {
 
             // Mileage
             if (entry.getMileage() != null && !entry.getMileage().isEmpty()) {
-                addTextToPage(document, page, entry.getMileage(), ROW_MILEAGE_X, yPosition);
+                addFittedTextToPage(document, page, entry.getMileage(), ROW_MILEAGE_X, yPosition, MILEAGE_WIDTH);
             }
 
             // City/Zip Code
             if (entry.getCityZipCode() != null && !entry.getCityZipCode().isEmpty()) {
-                addTextToPage(document, page, entry.getCityZipCode(), ROW_CITY_X, yPosition);
+                addFittedTextToPage(document, page, entry.getCityZipCode(), ROW_CITY_X, yPosition, CITY_WIDTH);
             }
 
             // Shipper
             if (entry.getShipper() != null && !entry.getShipper().isEmpty()) {
-                addTextToPage(document, page, entry.getShipper(), ROW_SHIPPER_X, yPosition);
+                addFittedTextToPage(document, page, entry.getShipper(), ROW_SHIPPER_X, yPosition, SHIPPER_WIDTH);
             }
 
             // Consignee
             if (entry.getConsignee() != null && !entry.getConsignee().isEmpty()) {
-                addTextToPage(document, page, entry.getConsignee(), ROW_CONSIGNEE_X, yPosition);
+                addFittedTextToPage(document, page, entry.getConsignee(), ROW_CONSIGNEE_X, yPosition, CONSIGNEE_WIDTH);
             }
 
             // Type (will be handled by checkboxes)
             // Trailer Number
             if (entry.getTrailerNumber() != null && !entry.getTrailerNumber().isEmpty()) {
-                addTextToPage(document, page, entry.getTrailerNumber(), ROW_TRAILER_X, yPosition);
+                addFittedTextToPage(document, page, entry.getTrailerNumber(), ROW_TRAILER_X, yPosition, TRAILER_WIDTH);
             }
 
             // Duty Code
             if (entry.getDutyCode() != null && !entry.getDutyCode().isEmpty()) {
-                addTextToPage(document, page, entry.getDutyCode(), ROW_DUTY_CODE_X, yPosition);
+                addFittedTextToPage(document, page, entry.getDutyCode(), ROW_DUTY_CODE_X, yPosition, DUTY_CODE_WIDTH);
             }
         }
     }
@@ -323,7 +337,40 @@ public class PdfGenerator {
     }
 
     
-    // This method attempts to fit the provided text within the specified width by adjusting the font size.
+    /**
+     * Measure a string's width in points at a given font size.
+     */
+    private float measureWidth(String text, float fontSize) throws IOException {
+        return PDType1Font.HELVETICA.getStringWidth(text) / 1000f * fontSize;
+    }
+
+    /**
+     * Greedily wrap text into two lines that each fit within maxWidth at the given font size.
+     * If a single word still overflows maxWidth on its own, it is left on its own line as-is
+     * rather than being truncated.
+     */
+    private String[] wrapToTwoLines(String text, float fontSize, float maxWidth) throws IOException {
+        String[] words = text.trim().split("\\s+");
+        StringBuilder firstLine = new StringBuilder();
+        int splitIndex = words.length;
+
+        for (int i = 0; i < words.length; i++) {
+            String candidate = firstLine.length() == 0 ? words[i] : firstLine + " " + words[i];
+            if (firstLine.length() > 0 && measureWidth(candidate, fontSize) > maxWidth) {
+                splitIndex = i;
+                break;
+            }
+            firstLine = new StringBuilder(candidate);
+        }
+
+        String secondLine = String.join(" ", Arrays.copyOfRange(words, splitIndex, words.length));
+        return new String[] { firstLine.toString(), secondLine };
+    }
+
+    /**
+     * Fit the provided text within the specified width by shrinking the font size, and if it still
+     * doesn't fit at the minimum font size, wrap it onto a second line within the same row.
+     */
     private void addFittedTextToPage(
         PDDocument document,
         PDPage page,
@@ -336,40 +383,61 @@ public class PdfGenerator {
             return;
         }
 
+        String trimmed = text.trim();
         float fontSize = FONT_SIZE;
+        boolean fitsOnOneLine = false;
 
-        while (fontSize > DETAIL_ROW_MIN_FONT) {
-
-            float width =
-                    PDType1Font.HELVETICA.getStringWidth(text)
-                    / 1000f
-                    * fontSize;
-
-            if (width <= maxWidth) {
+        while (true) {
+            if (measureWidth(trimmed, fontSize) <= maxWidth) {
+                fitsOnOneLine = true;
                 break;
             }
-
+            if (fontSize <= MIN_FONT) {
+                break;
+            }
             fontSize -= 0.5f;
         }
 
-        PDPageContentStream contentStream =
-                new PDPageContentStream(
-                        document,
-                        page,
-                        PDPageContentStream.AppendMode.APPEND,
-                        true,
-                        true);
+        PDPageContentStream contentStream = new PDPageContentStream(
+                document, page, PDPageContentStream.AppendMode.APPEND, true, true);
 
         try {
-            contentStream.beginText();
-            contentStream.setFont(
-                    PDType1Font.HELVETICA,
-                    fontSize);
+            if (fitsOnOneLine) {
+                contentStream.beginText();
+                contentStream.setFont(PDType1Font.HELVETICA, fontSize);
+                contentStream.newLineAtOffset(x, y);
+                contentStream.showText(trimmed);
+                contentStream.endText();
+            } else {
+                // Doesn't fit on one line even at the minimum font size - wrap to a second line.
+                // Nudge the whole 2-line block up so the 2nd line has room without dipping into
+                // the row underneath; single-line text (the common case) is left untouched.
+                String[] lines = wrapToTwoLines(trimmed, MIN_FONT, maxWidth);
+                float lineHeight = MIN_FONT + 1;
+                float wrappedY = y + WRAP_Y_OFFSET;
 
-            contentStream.newLineAtOffset(x, y);
-            contentStream.showText(text);
-            contentStream.endText();
+                contentStream.beginText();
+                contentStream.setFont(PDType1Font.HELVETICA, MIN_FONT);
+                contentStream.newLineAtOffset(x, wrappedY);
+                contentStream.showText(lines[0]);
+                contentStream.endText();
 
+                if (!lines[1].isEmpty()) {
+                    contentStream.beginText();
+                    contentStream.setFont(PDType1Font.HELVETICA, MIN_FONT);
+                    contentStream.newLineAtOffset(x, wrappedY - lineHeight);
+                    contentStream.showText(lines[1]);
+                    contentStream.endText();
+                }
+            }
+
+            if (debugMode) {
+                contentStream.beginText();
+                contentStream.setFont(PDType1Font.HELVETICA, 6);
+                contentStream.newLineAtOffset(x, y + 8);
+                contentStream.showText(String.format("(%.0f,%.0f)", x, y));
+                contentStream.endText();
+            }
         } finally {
             contentStream.close();
         }
