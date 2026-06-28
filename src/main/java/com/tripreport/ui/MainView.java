@@ -243,7 +243,7 @@ public class MainView extends Application {
         typeCol.setCellFactory(col -> new ComboBoxTableCell<>(FXCollections.observableArrayList("EM", "TL", "LTL")));
         typeCol.setOnEditCommit(event -> {
             event.getRowValue().setType(event.getNewValue() != null ? event.getNewValue() : "");
-            tripTable.refresh();
+            javafx.application.Platform.runLater(tripTable::refresh);
         });
 
         // Trailer Number column
@@ -264,7 +264,7 @@ public class MainView extends Application {
             if (entry.hasDutyCode("H") || entry.hasDutyCode("J")) {
                 handleHJDutyCode(rowIndex, entry);
             }
-            tripTable.refresh();
+            javafx.application.Platform.runLater(tripTable::refresh);
         });
 
         tripTable.getColumns().addAll(rowNumCol, mileageCol, cityCol, shipperCol, consigneeCol, typeCol, trailerCol, dutyCol);
@@ -347,8 +347,10 @@ public class MainView extends Application {
                 case "trailerNumber" -> entry.setTrailerNumber(newValue != null ? newValue : "");
             }
 
-            // Refresh table to show updates
-            tripTable.refresh();
+            // Refresh table to show updates. Deferred so it doesn't run synchronously in the
+            // middle of a Tab-driven commit, which would clear the still-focused editor's
+            // graphic and cause focus to jump to the wrong place before navigation completes.
+            javafx.application.Platform.runLater(tripTable::refresh);
         });
 
         return col;
@@ -433,7 +435,6 @@ public class MainView extends Application {
             TripEntry nextRow = tripEntries.get(rowIndex + 1);
 
             if (nextRow.isDetailRow()) {
-                tripTable.refresh();
                 return;
             }
         }
@@ -447,8 +448,6 @@ public class MainView extends Application {
             tripEntries.add(rowIndex + 1, detailRow);
             updateAddRowButtonState();
         }
-
-        tripTable.refresh();
     }
 
     /**
@@ -689,7 +688,10 @@ public class MainView extends Application {
                 setText(null);
                 setGraphic(textField);
                 textField.selectAll();
-                textField.requestFocus();
+                // Defer focus request: the TextField hasn't completed a layout pass yet right
+                // after being attached as the graphic, so requestFocus() here can silently no-op,
+                // leaving the Scene to fall back to the first focus-traversable control instead.
+                javafx.application.Platform.runLater(textField::requestFocus);
             }
         }
 
@@ -760,6 +762,8 @@ public class MainView extends Application {
                 createComboBox();
                 setText(null);
                 setGraphic(comboBox);
+                // See EditingCell.startEdit() - focus must be deferred until after layout attaches the control.
+                javafx.application.Platform.runLater(comboBox::requestFocus);
             }
         }
 

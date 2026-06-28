@@ -10,6 +10,8 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,10 +24,13 @@ import java.util.List;
  */
 public class DutyCodeTableCell<S> extends TableCell<S, String> {
 
+    private static final Logger logger = LoggerFactory.getLogger(DutyCodeTableCell.class);
+
     private static final List<String> VALID_CODES = Arrays.asList(
             "A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "N", "S", "T"
     );
     private static final int MAX_SELECTED = 2;
+    private static final int MAX_SHOW_ATTEMPTS = 5;
 
     private Popup popup;
     private List<CheckBox> checkBoxes;
@@ -91,8 +96,11 @@ public class DutyCodeTableCell<S> extends TableCell<S, String> {
                 return;
             }
             boolean forward = !event.isShiftDown();
-            javafx.scene.Node focusOwner = getScene() != null ? getScene().getFocusOwner() : null;
-            boolean atEdge = forward ? focusOwner == doneButton : focusOwner == checkBoxes.get(0);
+            // The popup has its own separate Scene from this cell's Scene, so getScene().getFocusOwner()
+            // here would query the wrong window entirely. event.getTarget() correctly reflects which
+            // control inside the popup actually received the key press.
+            Object target = event.getTarget();
+            boolean atEdge = forward ? target == doneButton : target == checkBoxes.get(0);
             if (atEdge) {
                 event.consume();
                 int row = getIndex();
@@ -107,6 +115,29 @@ public class DutyCodeTableCell<S> extends TableCell<S, String> {
         popup.setAutoHide(true);
         popup.setOnAutoHide(e -> commitSelection());
         popup.getContent().add(box);
+
+        displayPopup(1);
+    }
+
+    /**
+     * Display the popup anchored to this cell. When startEdit() is invoked programmatically
+     * (e.g. via Tab navigation calling TableView.edit() right after scrollTo()), this cell may
+     * not have completed attaching to the live scene graph yet, so getScene()/localToScreen()
+     * can both still be null for a pulse or two. Retry on the next pulse instead of risking an
+     * NPE that would otherwise interrupt the skin mid-render and leave the table looking blank.
+     */
+    private void displayPopup(int attempt) {
+        if (popup == null) {
+            return;
+        }
+        if (getScene() == null || getScene().getWindow() == null) {
+            if (attempt >= MAX_SHOW_ATTEMPTS) {
+                logger.warn("Duty code cell never attached to a scene; not showing popup");
+                return;
+            }
+            javafx.application.Platform.runLater(() -> displayPopup(attempt + 1));
+            return;
+        }
 
         javafx.geometry.Bounds bounds = localToScreen(getBoundsInLocal());
         if (bounds != null) {
