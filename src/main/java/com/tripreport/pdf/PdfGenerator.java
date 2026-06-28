@@ -47,6 +47,10 @@ public class PdfGenerator {
     private static final float HEADER_MILEAGE_FINISH_X = 475;
     private static final float HEADER_MILEAGE_FINISH_Y = 490;
 
+    // Best-guess placement below Mileage Start - use Debug Mode to verify/adjust against the template.
+    private static final float HEADER_TOTAL_MILEAGE_X = 475;
+    private static final float HEADER_TOTAL_MILEAGE_Y = 460;
+
     private static final float HEADER_TRIP_START_DATE_X = 655;
     private static final float HEADER_TRIP_START_DATE_Y = 490;
 
@@ -200,6 +204,13 @@ public class PdfGenerator {
         if (tripReport.getMileageFinish() != null && !tripReport.getMileageFinish().isEmpty()) {
             addTextToPage(document, page, tripReport.getMileageFinish(),
                     HEADER_MILEAGE_FINISH_X, HEADER_MILEAGE_FINISH_Y);
+        }
+
+        // Total Mileage (computed from start/finish)
+        long totalMileage = tripReport.getTotalMileage();
+        if (totalMileage >= 0) {
+            addTextToPage(document, page, String.valueOf(totalMileage),
+                    HEADER_TOTAL_MILEAGE_X, HEADER_TOTAL_MILEAGE_Y);
         }
 
         // Trip Start Date
